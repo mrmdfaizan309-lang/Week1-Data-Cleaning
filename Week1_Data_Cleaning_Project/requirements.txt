@@ -1,0 +1,127 @@
+"""
+Week 1: Data Acquisition, Cleaning, and Preprocessing
+Run: python data_cleaning.py
+This project includes a small practice CSV for an offline first run.
+For the internship submission, download a public dataset (instructions in README.md)
+and set DATA_SOURCE to that file or use the optional URL below.
+"""
+from pathlib import Path
+import pandas as pd
+import matplotlib.pyplot as plt
+
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+OUT_DIR = ROOT / "outputs"
+OUT_DIR.mkdir(exist_ok=True)
+
+# Offline practice file. For a real public dataset, change this to your downloaded CSV.
+DATA_SOURCE = DATA_DIR / "titanic.csv"
+
+def main():
+    df = pd.read_csv(DATA_SOURCE)
+    initial_rows, initial_cols = df.shape
+    missing_before = df.isna().sum()
+    duplicates_before = int(df.duplicated().sum())
+
+    # Save initial profile for the report
+    with open(OUT_DIR / "initial_profile.txt", "w", encoding="utf-8") as f:
+        f.write(f"Dataset file: {DATA_SOURCE.name}\\n")
+        f.write(f"Initial shape: {initial_rows} rows x {initial_cols} columns\\n")
+        f.write("\\nMissing values by column:\\n")
+        f.write(missing_before.to_string())
+        f.write(f"\\n\\nDuplicate rows: {duplicates_before}\\n")
+        f.write("\\nData types:\\n")
+        f.write(df.dtypes.astype(str).to_string())
+        f.write("\\n\\nNumeric summary:\\n")
+        f.write(df.describe(include="all").to_string())
+
+    # Work on a copy so the raw data remains unchanged.
+    clean = df.copy()
+
+    # Standardize text columns: trim spaces; standardize gender casing.
+    for col in clean.select_dtypes(include="object").columns:
+        clean[col] = clean[col].str.strip()
+    if "gender" in clean.columns:
+        clean["gender"] = clean["gender"].str.title()
+
+    # Convert columns that should be numeric; invalid values become NaN.
+    for col in ["age", "annual_income"]:
+        if col in clean.columns:
+            clean[col] = pd.to_numeric(clean[col], errors="coerce")
+
+    # Handle impossible ages as invalid/missing (domain rule for this practice dataset).
+    if "age" in clean.columns:
+        clean.loc[(clean["age"] < 0) | (clean["age"] > 120), "age"] = pd.NA
+
+    # Remove exact duplicate rows.
+    clean = clean.drop_duplicates()
+
+    # Impute numeric missing values with median; categorical with mode.
+    for col in clean.select_dtypes(include="number").columns:
+        if clean[col].isna().any():
+            clean[col] = clean[col].fillna(clean[col].median())
+    for col in clean.select_dtypes(include=["object", "string"]).columns:
+        if clean[col].isna().any():
+            mode = clean[col].mode(dropna=True)
+            if not mode.empty:
+                clean[col] = clean[col].fillna(mode.iloc[0])
+
+    # IQR outlier detection on numeric columns. Report flags; do not automatically delete.
+    outlier_rows = []
+    for col in clean.select_dtypes(include="number").columns:
+        if col in ["record_id"]:
+            continue
+        q1, q3 = clean[col].quantile([0.25, 0.75])
+        iqr = q3 - q1
+        lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        flagged = clean[(clean[col] < lower) | (clean[col] > upper)]
+        for idx, row in flagged.iterrows():
+            outlier_rows.append({
+                "row_index": int(idx), "column": col, "value": row[col],
+                "lower_bound": lower, "upper_bound": upper
+            })
+    pd.DataFrame(outlier_rows, columns=["row_index","column","value","lower_bound","upper_bound"]).to_csv(
+        OUT_DIR / "outlier_flags.csv", index=False
+    )
+
+    clean.to_csv(OUT_DIR / "cleaned_customer_data.csv", index=False)
+    missing_after = clean.isna().sum()
+    with open(OUT_DIR / "cleaning_summary.txt", "w", encoding="utf-8") as f:
+        f.write("WEEK 1 DATA CLEANING SUMMARY\\n")
+        f.write(f"Initial shape: {initial_rows} rows x {initial_cols} columns\\n")
+        f.write(f"Final shape: {clean.shape[0]} rows x {clean.shape[1]} columns\\n")
+        f.write(f"Duplicate rows removed: {duplicates_before}\\n")
+        f.write("\\nMissing values before:\\n" + missing_before.to_string())
+        f.write("\\n\\nMissing values after:\\n" + missing_after.to_string())
+        f.write("\\n\\nCleaning decisions:\\n")
+        f.write("- Trimmed extra spaces in text values.\\n")
+        f.write("- Standardized gender labels to title case.\\n")
+        f.write("- Treated ages below 0 or above 120 as invalid for this example.\\n")
+        f.write("- Removed exact duplicate rows.\\n")
+        f.write("- Filled numeric missing values with median and categorical missing values with mode.\\n")
+        f.write("- Flagged IQR outliers for review instead of automatically deleting them.\\n")
+        f.write("\\nImportant: this is a practice dataset. For the final internship submission, use a public dataset and update the report with actual results.\\n")
+
+    # Create before/after missingness chart.
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    pd.DataFrame({"Before": missing_before, "After": missing_after}).plot(kind="bar", ax=ax)
+    ax.set_title("Missing Values Before vs After Cleaning")
+    ax.set_ylabel("Missing cell count")
+    ax.set_xlabel("Column")
+    plt.xticks(rotation=35, ha="right")
+    plt.tight_layout()
+    fig.savefig(OUT_DIR / "missing_values_before_after.png", dpi=160)
+    plt.close(fig)
+
+    print("Cleaning completed.")
+    print(f"Initial shape: {initial_rows} rows x {initial_cols} columns")
+    print(f"Final shape: {clean.shape[0]} rows x {clean.shape[1]} columns")
+    print(f"Duplicate rows found: {duplicates_before}")
+    print("Missing values before:")
+    print(missing_before.to_string())
+    print("Missing values after:")
+    print(missing_after.to_string())
+    print(f"Outputs saved in: {OUT_DIR}")
+
+if __name__ == "__main__":
+    main()
